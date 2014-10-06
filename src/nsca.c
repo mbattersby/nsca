@@ -885,6 +885,7 @@ static void accept_connection(int sock, void *unused){
         struct sockaddr_in *nptr;
         socklen_t addrlen;
         int rc;
+        int flags;
 #ifdef HAVE_LIBWRAP
 	struct request_info req;
 #endif
@@ -962,6 +963,10 @@ static void accept_connection(int sock, void *unused){
                         }
                 }
 
+        /* socket should be non-blocking */
+        flags=fcntl(new_sd,F_GETFL);
+        fcntl(new_sd,F_SETFL,flags|O_NONBLOCK);
+
         /* find out who just connected... */
         addrlen=sizeof(addr);
         rc=getpeername(new_sd,&addr,&addrlen);
@@ -1001,7 +1006,6 @@ static void handle_connection(int sock, void *data){
         init_packet send_packet;
         int bytes_to_send;
         int rc;
-        int flags;
         time_t packet_send_time;
         struct crypt_instance *CI;
 
@@ -1009,10 +1013,6 @@ static void handle_connection(int sock, void *data){
         /* log info to syslog facility */
         if(debug==TRUE)
                 syslog(LOG_INFO,"Handling the connection...");
-
-        /* socket should be non-blocking */
-        fcntl(sock,F_GETFL,&flags);
-        fcntl(sock,F_SETFL,flags|O_NONBLOCK);
 
         /* initialize encryption/decryption routines (server generates the IV to use and send to the client) */
         if(encrypt_init(password,decryption_method,NULL,&CI)!=OK){

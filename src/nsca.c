@@ -723,7 +723,7 @@ static int find_rhand(int fd){
                 }
 
 	/* we couldn't find the read handler */
-        syslog(LOG_ERR, "Handler stack corrupt - aborting");
+        syslog(LOG_ERR, "Read handler stack corrupt (fd %d)- aborting", fd);
         do_exit(STATE_CRITICAL);
         }
 
@@ -739,7 +739,7 @@ static int find_whand(int fd){
                 }
 
 	/* we couldn't find the write handler */
-        syslog(LOG_ERR, "Handler stack corrupt - aborting");
+        syslog(LOG_ERR, "Write handler stack corrupt (fd %d)- aborting", fd);
         do_exit(STATE_CRITICAL);
         }
 
@@ -941,7 +941,7 @@ static void accept_connection(int sock, void *unused){
 
 	if(!hosts_access(&req)){
 		/* refuse the connection */
-		syslog(LOG_ERR, "refused connect from %s", eval_client(&req));
+		syslog(LOG_ERR, "[fd%d] refused connect from %s", new_sd, eval_client(&req));
 		close(new_sd);
 		return;
 		}
@@ -973,7 +973,7 @@ static void accept_connection(int sock, void *unused){
 
         if(rc<0){
                 /* log error to syslog facility */
-                syslog(LOG_ERR,"Error: Network server getpeername() failure (%d: %s)",errno,strerror(errno));
+                syslog(LOG_ERR,"[fd%d] Network server getpeername() failure (%d: %s)",new_sd,errno,strerror(errno));
 
                 /* close socket prior to exiting */
                 close(new_sd);
@@ -986,7 +986,7 @@ static void accept_connection(int sock, void *unused){
 
         /* log info to syslog facility */
         if(debug==TRUE)
-                syslog(LOG_DEBUG,"Connection from %s port %d",inet_ntoa(nptr->sin_addr),nptr->sin_port);
+                syslog(LOG_DEBUG,"[fd%d] Connection from %s port %d",new_sd,inet_ntoa(nptr->sin_addr),nptr->sin_port);
 
 	/* handle the connection */
 	if(mode==SINGLE_PROCESS_DAEMON)
@@ -1012,10 +1012,11 @@ static void handle_connection(int sock, void *data){
 
         /* log info to syslog facility */
         if(debug==TRUE)
-                syslog(LOG_INFO,"Handling the connection...");
+                syslog(LOG_INFO,"[fd%d] Handling the connection...",sock);
 
         /* initialize encryption/decryption routines (server generates the IV to use and send to the client) */
         if(encrypt_init(password,decryption_method,NULL,&CI)!=OK){
+                syslog(LOG_ERR,"[fd%d] Encryption init failed, aborting",sock);
                 close(sock);
 		if(mode==MULTI_PROCESS_DAEMON)
 			do_exit(STATE_CRITICAL);
@@ -1033,7 +1034,7 @@ static void handle_connection(int sock, void *data){
 
         /* there was an error sending the packet */
         if(rc==-1){
-                syslog(LOG_ERR,"Could not send init packet to client\n");
+                syslog(LOG_ERR,"[fd%d] Could not send init packet to client", sock);
                 encrypt_cleanup(decryption_method,CI);
                 close(sock);
 		if(mode==MULTI_PROCESS_DAEMON)
@@ -1043,7 +1044,7 @@ static void handle_connection(int sock, void *data){
 
         /* for some reason we didn't send all the bytes we were supposed to */
 	else if(bytes_to_send<sizeof(send_packet)){
-                syslog(LOG_ERR,"Only able to send %d of %d bytes of init packet to client\n",rc,sizeof(send_packet));
+                syslog(LOG_ERR,"[fd%d] Only able to send %d of %d bytes of init packet to client\n",sock,rc,sizeof(send_packet));
                 encrypt_cleanup(decryption_method,CI);
                 close(sock);
 		if(mode==MULTI_PROCESS_DAEMON)
@@ -1107,7 +1108,7 @@ static void handle_connection_read(int sock, void *data){
                         }
 				else {
                         if(debug==TRUE)
-                                syslog(LOG_ERR,"End of connection...");
+                                syslog(LOG_ERR,"[fd%d] End of connection...",sock);
                         encrypt_cleanup(decryption_method, CI);
                         close(sock);
                         if(mode==SINGLE_PROCESS_DAEMON)
@@ -1119,7 +1120,7 @@ static void handle_connection_read(int sock, void *data){
 
         /* we couldn't read the correct amount of data, so bail out */
         if(bytes_to_recv!=packet_length){
-                syslog(LOG_ERR,"Data sent from client was too short (%d < %d), aborting...",bytes_to_recv,packet_length);
+                syslog(LOG_ERR,"[fd%d] Data sent from client was too short (%d < %d), aborting...",sock,bytes_to_recv,packet_length);
                 encrypt_cleanup(decryption_method, CI);
                 close(sock);
 		return;
@@ -1138,7 +1139,7 @@ static void handle_connection_read(int sock, void *data){
 
         /* make sure this is the right type of packet */
         if(ntohs(receive_packet.packet_version)!=NSCA_PACKET_VERSION_3){
-                syslog(LOG_ERR,"Received invalid packet type/version from client - possibly due to client using wrong password or crypto algorithm?");
+                syslog(LOG_ERR,"[fd%d] Received invalid packet type/version from client - possibly due to client using wrong password or crypto algorithm?", sock);
 		/*return;*/
 		close(sock);
                 if(mode==SINGLE_PROCESS_DAEMON)
@@ -1152,7 +1153,7 @@ static void handle_connection_read(int sock, void *data){
         receive_packet.crc32_value=0L;
         calculated_crc32=calculate_crc32((char *)&receive_packet,packet_length);
         if(packet_crc32!=calculated_crc32){
-                syslog(LOG_ERR,"Dropping packet with invalid CRC32 - possibly due to client using wrong password or crypto algorithm?");
+                syslog(LOG_ERR,"[fd%d] Dropping packet with invalid CRC32 - possibly due to client using wrong password or crypto algorithm?", sock);
                 /*return;*/
 		close(sock);
                 if(mode==SINGLE_PROCESS_DAEMON)
@@ -1167,11 +1168,11 @@ static void handle_connection_read(int sock, void *data){
 
         packet_age=(unsigned long)(current_time-packet_time);
         if(debug==TRUE)
-                  syslog(LOG_ERR,"Time difference in packet: %lu seconds for host %s", packet_age, host_name);
+                  syslog(LOG_ERR,"[fd%d] Time difference in packet: %lu seconds for host %s", sock, packet_age, host_name);
         if((max_packet_age>0 && (packet_age>max_packet_age) && (packet_age>=0)) ||
                 ((max_packet_age>0) && (packet_age<(0-max_packet_age)) && (packet_age < 0))
         ){
-                syslog(LOG_ERR,"Dropping packet with stale timestamp for %s - packet was %lu seconds old.",host_name,packet_age);
+                syslog(LOG_ERR,"[fd%d] Dropping packet with stale timestamp for %s - packet was %lu seconds old.",sock,host_name,packet_age);
 		close(sock);
                 if(mode==SINGLE_PROCESS_DAEMON)
                         return;
@@ -1195,9 +1196,9 @@ static void handle_connection_read(int sock, void *data){
         /* log info to syslog facility */
         if(debug==TRUE){
 		if(!strcmp(svc_description,""))
-			syslog(LOG_NOTICE,"HOST CHECK -> Host Name: '%s', Return Code: '%d', Output: '%s'",host_name,return_code,plugin_output);
+			syslog(LOG_NOTICE,"[fd%d] HOST CHECK -> Host Name: '%s', Return Code: '%d', Output: '%s'",sock,host_name,return_code,plugin_output);
 		else
-			syslog(LOG_NOTICE,"SERVICE CHECK -> Host Name: '%s', Service Description: '%s', Return Code: '%d', Output: '%s'",host_name,svc_description,return_code,plugin_output);
+			syslog(LOG_NOTICE,"[fd%d] SERVICE CHECK -> Host Name: '%s', Service Description: '%s', Return Code: '%d', Output: '%s'",sock,host_name,svc_description,return_code,plugin_output);
 	        }
 
         /* write the check result to the external command file.
